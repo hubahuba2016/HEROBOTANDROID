@@ -1,3 +1,4 @@
+package com.herobot;
 import java.io.*;
 import java.sql.*;
 import java.util.*;
@@ -18,7 +19,7 @@ public class Chatbot {
     );
 
 
-  public static void main(String[] args) throws Exception {
+    public static void main(String[] args) throws Exception {
         try (Connection conn = connectDB()) {
             importTrainingData(conn, "chatbot_training_data.txt");
             Scanner scanner = new Scanner(System.in);
@@ -56,9 +57,9 @@ public class Chatbot {
 
     private static void importTrainingData(Connection conn, String filename) throws IOException, SQLException {
         File file = new File(filename);
-      if (!file.exists()) {
-    System.out.println("Training file '" + filename + "' not found in: " + file.getAbsolutePath());
-    return;
+        if (!file.exists()) {
+        System.out.println("Training file '" + filename + "' not found in: " + file.getAbsolutePath());
+        return;
         }
 
         BufferedReader reader = new BufferedReader(new FileReader(file));
@@ -102,7 +103,7 @@ public class Chatbot {
         }
     }
 
-  private static String getResponse(Connection conn, String input) throws SQLException {
+    private static String getResponse(Connection conn, String input) throws SQLException {
     Statement stmt = conn.createStatement();
     ResultSet rs = stmt.executeQuery("SELECT question, answer FROM chatbot");
 
@@ -144,8 +145,7 @@ public class Chatbot {
     }
 }
 
-
-   private static Map<String, Integer> buildVocab(List<String> texts) {
+    private static Map<String, Integer> buildVocab(List<String> texts) {
     Set<String> words = new HashSet<>();
 
     for (String text : texts) {
@@ -247,7 +247,13 @@ public class Chatbot {
             return "Local LLM connection error.";
         }
     }
+    public String reply(String input) {
+        String response = "Bot: " + input;
 
+        android.util.Log.d("HeroBot", response);
+
+        return response;
+    }
 
 }
 
