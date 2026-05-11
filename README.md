@@ -1,32 +1,140 @@
-# HeroBot by Hubaka
+# HeroBot Android
 
-HeroBot is a Java-based chatbot / AI assistant project built for fun, learning, and experimentation. It integrates with local LLM models using **Ollama** (specifically the **Phi** model) to provide AI-powered responses.
+HeroBot Android is an Android version of the HeroBot project by HubakaGS.
 
----
+The project focuses on creating a customizable AI/chatbot experience that can run on Android devices.
 
-## 🧠 About
+## Features
 
-This project is a personal AI chatbot written in Java.  
-It currently includes:
+* Android app build using Gradle
+* Java-based chatbot system
+* SQLite support
+* Offline chatbot functionality
+* Expandable architecture for future AI features
+* Built and tested on Linux/Kubuntu
 
-- Core bot logic (`Herobot` folder / classes)
-- Single-file AI code example
-- Integration with Ollama (Phi model)
-- Project settings and configs
+## Current Status
 
-HeroBot sends prompts to a locally running Ollama instance and receives AI-generated responses.
+Current version: Early Development
 
----
+Working features:
 
-## 🚀 Getting Started
+* APK building
+* Android project structure
+* Gradle build system
+* Java compatibility fixes
 
-### 📥 Requirements
+Planned features:
 
-Before running the bot, make sure you have:
+* Improved chatbot responses
+* Learning system
+* Better UI
+* Internet fallback support
+* Expanded local database
+* RPG/game integration ideas
 
-- **Java JDK 17** (or later)
-- **Ollama installed**
-- **Phi model downloaded in Ollama**
-- A terminal/console environment
+## Requirements
 
----
+### Linux / Kubuntu
+
+Install:
+
+* OpenJDK 17
+* Android SDK
+* Gradle
+* ADB (optional for testing)
+
+Check Java version:
+
+```bash
+java -version
+javac -version
+```
+
+## Building the APK
+
+From the project root:
+
+```bash
+./gradlew assembleDebug
+```
+
+Release build:
+
+```bash
+./gradlew assembleRelease
+```
+
+APK output locations:
+
+```text
+app/build/outputs/apk/debug/
+app/build/outputs/apk/release/
+```
+
+## Running on Android
+
+Install with ADB:
+
+```bash
+adb install app/build/outputs/apk/debug/app-debug.apk
+```
+
+Or transfer the APK manually to your Android device.
+
+## Project Goals
+
+The goal of HeroBot is to create an interactive AI assistant/chatbot that can:
+
+* Run on Android
+* Learn and expand over time
+* Work offline
+* Support future AI integrations
+* Become part of larger game and assistant projects
+
+## Development Environment
+
+Main development tools:
+
+* Kubuntu Linux
+* VS Code
+* Android Studio tools
+* Gradle
+* OpenJDK 17
+
+## Repository Structure
+
+```text
+app/                Android application source
+gradle/             Gradle wrapper files
+build.gradle        Project build configuration
+settings.gradle     Gradle settings
+```
+
+## Roadmap
+
+* [x] Android build setup
+* [x] APK generation
+* [ ] Improved chatbot engine
+* [ ] Better Android UI
+* [ ] Persistent memory system
+* [ ] AI/NLP improvements
+* [ ] Voice features
+* [ ] Game integration
+
+## Contributing
+
+This project is currently experimental and under active development.
+
+Feedback, ideas, and testing are welcome.
+
+## Author
+
+HubakaGS
+
+Ko-fi:
+[ko-fi.com/kubohiki](https://ko-fi.com/kubohiki)
+
+## License
+
+ GNU GENERAL PUBLIC LICENSE Version 3
