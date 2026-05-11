@@ -11,7 +11,7 @@ public class MainActivity extends Activity {
     EditText inputBox;
     Button sendBtn;
 
-    Chatbot bot; // your existing class
+    Chatbot bot;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -22,7 +22,8 @@ public class MainActivity extends Activity {
         inputBox = findViewById(R.id.inputBox);
         sendBtn = findViewById(R.id.sendBtn);
 
-        bot = new Chatbot();
+        // ✅ CORRECT initialization (ONLY HERE)
+        bot = new Chatbot(this);
 
         sendBtn.setOnClickListener(new View.OnClickListener() {
             @Override

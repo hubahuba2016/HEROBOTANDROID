@@ -5,7 +5,11 @@ plugins {
 android {
     namespace = "com.herobot"
     compileSdk = 34
-
+    lint {
+        abortOnError = false
+        checkReleaseBuilds = false
+        warningsAsErrors = false
+    }
     defaultConfig {
         applicationId = "com.herobot"
         minSdk = 21
@@ -27,10 +31,7 @@ android {
             )
         }
     }
-    lint {
-    checkReleaseBuilds = false
-    abortOnError = false
-}
+    
 signingConfigs {
     create("release") {
         storeFile = file("herobot-release.keystore")
