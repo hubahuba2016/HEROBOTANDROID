@@ -1,4 +1,4 @@
-package org.example.herobot;
+package com.herobot;
 
 import android.app.Activity;
 import android.os.Bundle;

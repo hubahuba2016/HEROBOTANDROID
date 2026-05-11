@@ -4,16 +4,19 @@ plugins {
 
 android {
     namespace = "com.herobot"
-    compileSdk = 33
+    compileSdk = 34
 
     defaultConfig {
         applicationId = "com.herobot"
         minSdk = 21
-        targetSdk = 33
+        targetSdk = 34
         versionCode = 1
         versionName = "1.0"
     }
-
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
     buildTypes {
         getByName("release") {
             isMinifyEnabled = false
@@ -28,10 +31,30 @@ android {
     checkReleaseBuilds = false
     abortOnError = false
 }
+signingConfigs {
+    create("release") {
+        storeFile = file("herobot-release.keystore")
+        storePassword = "774954hbkckpbgt"
+        keyAlias = "herobot"
+        keyPassword = "774954hbkckpbgt"
+    }
+}
+
+buildTypes {
+    getByName("release") {
+        isMinifyEnabled = false
+        signingConfig = signingConfigs.getByName("release")
+
+        proguardFiles(
+            getDefaultProguardFile("proguard-android-optimize.txt"),
+            "proguard-rules.pro"
+        )
+    }
 }
 
 dependencies {
     implementation("org.xerial:sqlite-jdbc:3.45.1.0")
     implementation("org.apache.commons:commons-math3:3.6.1")
     implementation("org.json:json:20240303")
+}
 }
