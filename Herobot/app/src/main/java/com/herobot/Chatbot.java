@@ -9,6 +9,7 @@ import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.nio.charset.StandardCharsets;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.io.InputStreamReader;
@@ -69,7 +70,7 @@ public class Chatbot {
 
         // 5. Ollama LLM Fallback
         String llmReply = askLocalLLM(input);
-        if (llmReply != null && !llmReply.contains("error")) {
+        if (llmReply != null) {
             return llmReply;
         }
 
@@ -84,7 +85,7 @@ public class Chatbot {
     }
 
     public void importTrainingData(InputStream is) {
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(is))) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
             String line;
             String question = null;
             while ((line = reader.readLine()) != null) {
@@ -136,7 +137,7 @@ public class Chatbot {
             }
         }
 
-        // Using a 0.55 threshold for a balance between accuracy and flexibility
+        // Using a 0.65 threshold for a balance between accuracy and flexibility
         if (bestScore > 0.65) {
             return bestAnswer;
         }
@@ -158,17 +159,19 @@ public class Chatbot {
         double norm1 = 0.0;
         double norm2 = 0.0;
 
-        Set<String> allWords = new HashSet<>(v1.keySet());
-        allWords.addAll(v2.keySet());
-
-        for (String word : allWords) {
-            int c1 = v1.getOrDefault(word, 0);
-            int c2 = v2.getOrDefault(word, 0);
-            dotProduct += (double) c1 * c2;
+        for (Map.Entry<String, Integer> entry : v1.entrySet()) {
+            int c1 = entry.getValue();
             norm1 += Math.pow(c1, 2);
-            norm2 += Math.pow(c2, 2);
+
+            Integer c2 = v2.get(entry.getKey());
+            if (c2 != null) {
+                dotProduct += (double) c1 * c2;
+            }
         }
 
+        for (int c2 : v2.values()) {
+            norm2 += Math.pow(c2, 2);
+        }
         return (norm1 == 0 || norm2 == 0) ? 0.0 : dotProduct / (Math.sqrt(norm1) * Math.sqrt(norm2));
     }
 
@@ -191,34 +194,37 @@ public class Chatbot {
     }
 
     private String fetchFromWeb(String query) {
+        HttpURLConnection conn = null;
         try {
             String urlStr = "https://api.duckduckgo.com/?q=" +
-                    URLEncoder.encode(query, "UTF-8") +
+                    URLEncoder.encode(query, StandardCharsets.UTF_8.name()) +
                     "&format=json&no_html=1&skip_disambig=1";
 
             URL url = new URL(urlStr);
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
             conn.setConnectTimeout(5000);
+            conn.setReadTimeout(5000);
 
             if (conn.getResponseCode() == 200) {
-                BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-                StringBuilder response = new StringBuilder();
-                String line;
-                while ((line = in.readLine()) != null) {
-                    response.append(line);
-                }
-                in.close();
+                try (BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+                    StringBuilder response = new StringBuilder();
+                    String line;
+                    while ((line = in.readLine()) != null) {
+                        response.append(line);
+                    }
+                    JSONObject json = new JSONObject(response.toString());
+                    String abstractText = json.optString("AbstractText", "");
 
-                JSONObject json = new JSONObject(response.toString());
-                String abstractText = json.optString("AbstractText", "");
-
-                if (!abstractText.isEmpty()) {
-                    return abstractText;
+                    if (!abstractText.isEmpty()) {
+                        return abstractText;
+                    }
                 }
             }
         } catch (Exception e) {
             Log.e(TAG, "Web Search Error: " + e.getMessage());
+        } finally {
+            if (conn != null) conn.disconnect();
         }
         return null;
     }
@@ -227,15 +233,17 @@ public class Chatbot {
     // LLM FALLBACK
     // =========================
     private String askLocalLLM(String prompt) {
+        HttpURLConnection conn = null;
         try {
             // Use 10.0.2.2 for Android Emulator to reach your PC, 
             // or use 'localhost' if running Ollama via Termux on the phone.
             URL url = new URL("http://10.0.2.2:11434/api/generate");
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
             conn.setRequestProperty("Content-Type", "application/json");
             conn.setDoOutput(true);
-            conn.setConnectTimeout(5000); // 5 sec timeout
+            conn.setConnectTimeout(5000); 
+            conn.setReadTimeout(30000); // LLMs take time to generate, 30s is safer
 
             JSONObject jsonBody = new JSONObject();
             jsonBody.put("model", "phi");
@@ -243,27 +251,29 @@ public class Chatbot {
             jsonBody.put("stream", false);
 
             try (OutputStream os = conn.getOutputStream()) {
-                os.write(jsonBody.toString().getBytes());
+                os.write(jsonBody.toString().getBytes(StandardCharsets.UTF_8));
             }
 
             if (conn.getResponseCode() == 200) {
-                BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-                StringBuilder response = new StringBuilder();
-                String line;
-                while ((line = in.readLine()) != null) {
-                    response.append(line);
+                try (BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+                    StringBuilder response = new StringBuilder();
+                    String line;
+                    while ((line = in.readLine()) != null) {
+                        response.append(line);
+                    }
+                    JSONObject jsonResponse = new JSONObject(response.toString());
+                    return jsonResponse.optString("response", "I'm having trouble thinking right now.").trim();
                 }
-                in.close();
-
-                JSONObject jsonResponse = new JSONObject(response.toString());
-                return jsonResponse.getString("response").trim();
             } else {
-                return "Ollama is not reachable (Code: " + conn.getResponseCode() + ")";
+                Log.e(TAG, "Ollama is not reachable (Code: " + conn.getResponseCode() + ")");
+                return null;
             }
 
         } catch (Exception e) {
             Log.e(TAG, "LLM Error: " + e.getMessage());
-            return "Local LLM connection error. Make sure Ollama is running.";
+            return null;
+        } finally {
+            if (conn != null) conn.disconnect();
         }
     }
 }
