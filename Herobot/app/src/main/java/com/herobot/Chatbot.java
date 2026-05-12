@@ -3,10 +3,19 @@ package com.herobot;
 import android.content.Context;
 import android.database.Cursor;
 
+import android.util.Log;
+import org.json.JSONObject;
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.io.InputStreamReader;
 import java.util.*;
 
 public class Chatbot {
 
+    private static final String TAG = "HeroBot_Logic";
     private DBHelper db;
 
     private static final Set<String> STOPWORDS = Set.of(
@@ -50,7 +59,13 @@ public class Chatbot {
             return smart;
         }
 
-        return "I don't understand yet. You can train me!";
+        // 4. Ollama LLM Fallback
+        String llmReply = askLocalLLM(input);
+        if (llmReply != null && !llmReply.contains("error")) {
+            return llmReply;
+        }
+
+        return "I'm not sure how to answer that yet. You can teach me by typing 'train: question | answer'";
     }
 
     // =========================
@@ -58,6 +73,26 @@ public class Chatbot {
     // =========================
     public void train(String question, String answer) {
         db.insertQA(question, answer);
+    }
+
+    public void importTrainingData(InputStream is) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(is))) {
+            String line;
+            String question = null;
+            while ((line = reader.readLine()) != null) {
+                line = line.trim();
+                if (line.startsWith("Q: ")) {
+                    question = line.substring(3).trim();
+                } else if (line.startsWith("A: ") && question != null) {
+                    String answer = line.substring(3).trim();
+                    db.insertQA(question, answer);
+                    question = null;
+                }
+            }
+            Log.d(TAG, "Training data seeded successfully.");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to import training data", e);
+        }
     }
 
     // =========================
@@ -81,9 +116,11 @@ public class Chatbot {
         String bestAnswer = null;
         double bestScore = 0;
 
-        for (int i = 0; i < questions.size(); i++) {
+        Map<String, Integer> inputVector = getVector(input);
 
-            double score = similarity(input, questions.get(i));
+        for (int i = 0; i < questions.size(); i++) {
+            Map<String, Integer> questionVector = getVector(questions.get(i));
+            double score = cosineSimilarity(inputVector, questionVector);
 
             if (score > bestScore) {
                 bestScore = score;
@@ -91,7 +128,8 @@ public class Chatbot {
             }
         }
 
-        if (bestScore > 0.5) {
+        // Using a 0.55 threshold for a balance between accuracy and flexibility
+        if (bestScore > 0.65) {
             return bestAnswer;
         }
 
@@ -99,34 +137,41 @@ public class Chatbot {
     }
 
     // =========================
-    // VERY LIGHT WEIGHT SIMILARITY
-    // =========================
-    private double similarity(String a, String b) {
+    private Map<String, Integer> getVector(String text) {
+        Map<String, Integer> vector = new HashMap<>();
+        for (String word : tokenize(text)) {
+            vector.put(word, vector.getOrDefault(word, 0) + 1);
+        }
+        return vector;
+    }
 
-        Set<String> aWords = tokenize(a);
-        Set<String> bWords = tokenize(b);
+    private double cosineSimilarity(Map<String, Integer> v1, Map<String, Integer> v2) {
+        double dotProduct = 0.0;
+        double norm1 = 0.0;
+        double norm2 = 0.0;
 
-        if (aWords.isEmpty() || bWords.isEmpty()) return 0;
+        Set<String> allWords = new HashSet<>(v1.keySet());
+        allWords.addAll(v2.keySet());
 
-        int match = 0;
-
-        for (String w : aWords) {
-            if (bWords.contains(w)) {
-                match++;
-            }
+        for (String word : allWords) {
+            int c1 = v1.getOrDefault(word, 0);
+            int c2 = v2.getOrDefault(word, 0);
+            dotProduct += (double) c1 * c2;
+            norm1 += Math.pow(c1, 2);
+            norm2 += Math.pow(c2, 2);
         }
 
-        return (double) match / Math.max(aWords.size(), bWords.size());
+        return (norm1 == 0 || norm2 == 0) ? 0.0 : dotProduct / (Math.sqrt(norm1) * Math.sqrt(norm2));
     }
 
     // =========================
     // TOKENIZER
     // =========================
-    private Set<String> tokenize(String text) {
+    private List<String> tokenize(String text) {
 
         text = text.replaceAll("[^a-zA-Z0-9 ]", "").toLowerCase();
 
-        Set<String> words = new HashSet<>();
+        List<String> words = new ArrayList<>();
 
         for (String w : text.split("\\s+")) {
             if (!STOPWORDS.contains(w) && !w.isEmpty()) {
@@ -135,5 +180,46 @@ public class Chatbot {
         }
 
         return words;
+    }
+
+    private String askLocalLLM(String prompt) {
+        try {
+            // Use 10.0.2.2 for Android Emulator to reach your PC, 
+            // or use 'localhost' if running Ollama via Termux on the phone.
+            URL url = new URL("http://10.0.2.2:11434/api/generate");
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Content-Type", "application/json");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(5000); // 5 sec timeout
+
+            JSONObject jsonBody = new JSONObject();
+            jsonBody.put("model", "phi");
+            jsonBody.put("prompt", "You are HeroBot. Be concise. User: " + prompt);
+            jsonBody.put("stream", false);
+
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(jsonBody.toString().getBytes());
+            }
+
+            if (conn.getResponseCode() == 200) {
+                BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+                StringBuilder response = new StringBuilder();
+                String line;
+                while ((line = in.readLine()) != null) {
+                    response.append(line);
+                }
+                in.close();
+
+                JSONObject jsonResponse = new JSONObject(response.toString());
+                return jsonResponse.getString("response").trim();
+            } else {
+                return "Ollama is not reachable (Code: " + conn.getResponseCode() + ")";
+            }
+
+        } catch (Exception e) {
+            Log.e(TAG, "LLM Error: " + e.getMessage());
+            return "Local LLM connection error. Make sure Ollama is running.";
+        }
     }
 }
