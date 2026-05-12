@@ -19,11 +19,7 @@ public class Chatbot {
 
     private static final String TAG = "HeroBot_Logic";
     private DBHelper db;
-
-    private static final Set<String> STOPWORDS = Set.of(
-            "what","is","the","a","an","are","you","can","to","of","and",
-            "in","on","at","for","with","who","why","how","when","where"
-    );
+    private static boolean isDownloading = false;
 
     public Chatbot(Context context) {
         db = new DBHelper(context);
@@ -32,49 +28,49 @@ public class Chatbot {
     // =========================
     // MAIN ENTRY (USED BY APP)
     // =========================
-    public String reply(String input) {
+    public BotResponse reply(String input) {
 
         input = input.toLowerCase().trim();
 
         // 1. Exact match from DB
         String dbAnswer = db.getAnswer(input);
         if (dbAnswer != null) {
-            return dbAnswer;
+            return new BotResponse(dbAnswer, BotResponse.Source.DATABASE);
         }
 
         // 2. Simple built-in responses
         if (input.contains("hello")) {
-            return "Hi! I'm HeroBot.";
+            return new BotResponse("Hi! I'm HeroBot.", BotResponse.Source.SYSTEM);
         }
 
         if (input.contains("who are you")) {
-            return "I am HeroBot, your Android assistant.";
+            return new BotResponse("I am HeroBot, your Android assistant.", BotResponse.Source.SYSTEM);
         }
 
         if (input.contains("help")) {
-            return "I can answer trained questions or learn new ones!";
+            return new BotResponse("I can answer trained questions or learn new ones!", BotResponse.Source.SYSTEM);
         }
 
         // 3. Fallback learning (simple similarity search)
         String smart = findBestMatch(input);
         if (smart != null) {
-            return smart;
+            return new BotResponse(smart, BotResponse.Source.DATABASE);
         }
 
         // 4. Internet Search & Learning
         String webReply = fetchFromWeb(input);
         if (webReply != null) {
             train(input, webReply); // Persist the knowledge to DB
-            return webReply;
+            return new BotResponse(webReply, BotResponse.Source.WEB);
         }
 
         // 5. Ollama LLM Fallback
         String llmReply = askLocalLLM(input);
         if (llmReply != null) {
-            return llmReply;
+            return new BotResponse(llmReply, BotResponse.Source.LLM);
         }
 
-        return "I'm not sure how to answer that, and I couldn't find it online. You can teach me by typing 'train: question | answer'";
+        return new BotResponse("I'm not sure how to answer that. You can teach me by typing 'train: question | answer'", BotResponse.Source.NONE);
     }
 
     // =========================
@@ -125,11 +121,11 @@ public class Chatbot {
         String bestAnswer = null;
         double bestScore = 0;
 
-        Map<String, Integer> inputVector = getVector(input);
+        Map<String, Integer> inputVector = NLPHelper.getVector(input);
 
         for (int i = 0; i < questions.size(); i++) {
-            Map<String, Integer> questionVector = getVector(questions.get(i));
-            double score = cosineSimilarity(inputVector, questionVector);
+            Map<String, Integer> questionVector = NLPHelper.getVector(questions.get(i));
+            double score = NLPHelper.cosineSimilarity(inputVector, questionVector);
 
             if (score > bestScore) {
                 bestScore = score;
@@ -143,54 +139,6 @@ public class Chatbot {
         }
 
         return null;
-    }
-
-    // =========================
-    private Map<String, Integer> getVector(String text) {
-        Map<String, Integer> vector = new HashMap<>();
-        for (String word : tokenize(text)) {
-            vector.put(word, vector.getOrDefault(word, 0) + 1);
-        }
-        return vector;
-    }
-
-    private double cosineSimilarity(Map<String, Integer> v1, Map<String, Integer> v2) {
-        double dotProduct = 0.0;
-        double norm1 = 0.0;
-        double norm2 = 0.0;
-
-        for (Map.Entry<String, Integer> entry : v1.entrySet()) {
-            int c1 = entry.getValue();
-            norm1 += Math.pow(c1, 2);
-
-            Integer c2 = v2.get(entry.getKey());
-            if (c2 != null) {
-                dotProduct += (double) c1 * c2;
-            }
-        }
-
-        for (int c2 : v2.values()) {
-            norm2 += Math.pow(c2, 2);
-        }
-        return (norm1 == 0 || norm2 == 0) ? 0.0 : dotProduct / (Math.sqrt(norm1) * Math.sqrt(norm2));
-    }
-
-    // =========================
-    // TOKENIZER
-    // =========================
-    private List<String> tokenize(String text) {
-
-        text = text.replaceAll("[^a-zA-Z0-9 ]", "").toLowerCase();
-
-        List<String> words = new ArrayList<>();
-
-        for (String w : text.split("\\s+")) {
-            if (!STOPWORDS.contains(w) && !w.isEmpty()) {
-                words.add(w);
-            }
-        }
-
-        return words;
     }
 
     private String fetchFromWeb(String query) {
@@ -234,10 +182,13 @@ public class Chatbot {
     // =========================
     private String askLocalLLM(String prompt) {
         HttpURLConnection conn = null;
+        String modelName = "phi";
         try {
-            // Use 10.0.2.2 for Android Emulator to reach your PC, 
-            // or use 'localhost' if running Ollama via Termux on the phone.
-            URL url = new URL("http://10.0.2.2:11434/api/generate");
+            // 10.0.2.2 is the special alias for the host loopback interface in the Android Emulator.
+            // If you are running on a physical device, 'localhost' is used for Termux-hosted Ollama.
+            String host = android.os.Build.FINGERPRINT.contains("generic") ? "10.0.2.2" : "localhost";
+            
+            URL url = new URL("http://" + host + ":11434/api/generate");
             conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
             conn.setRequestProperty("Content-Type", "application/json");
@@ -246,7 +197,7 @@ public class Chatbot {
             conn.setReadTimeout(30000); // LLMs take time to generate, 30s is safer
 
             JSONObject jsonBody = new JSONObject();
-            jsonBody.put("model", "phi");
+            jsonBody.put("model", modelName);
             jsonBody.put("prompt", "You are HeroBot. Be concise. User: " + prompt);
             jsonBody.put("stream", false);
 
@@ -264,8 +215,15 @@ public class Chatbot {
                     JSONObject jsonResponse = new JSONObject(response.toString());
                     return jsonResponse.optString("response", "I'm having trouble thinking right now.").trim();
                 }
+            } else if (conn.getResponseCode() == 404 && !isDownloading) {
+                // Model not found on the server, try to pull it
+                Log.w(TAG, "Model " + modelName + " not found. Attempting to download...");
+                if (pullModelFromOllama(modelName)) {
+                    return "I'm downloading the '" + modelName + "' model now. Please try again in a minute!";
+                }
+                return null; // If pullModelFromOllama returns false, we need to return something.
             } else {
-                Log.e(TAG, "Ollama is not reachable (Code: " + conn.getResponseCode() + ")");
+                Log.e(TAG, "Ollama Error (Code: " + conn.getResponseCode() + ")");
                 return null;
             }
 
@@ -275,5 +233,44 @@ public class Chatbot {
         } finally {
             if (conn != null) conn.disconnect();
         }
+    }
+
+    /**
+     * Commands the Ollama server to download a model.
+     */
+    private boolean pullModelFromOllama(String modelName) {
+        isDownloading = true;
+        new Thread(() -> {
+            HttpURLConnection conn = null;
+            try {
+                String host = android.os.Build.FINGERPRINT.contains("generic") ? "10.0.2.2" : "localhost";
+                URL url = new URL("http://" + host + ":11434/api/pull");
+                conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("POST");
+                conn.setRequestProperty("Content-Type", "application/json");
+                conn.setDoOutput(true);
+
+                JSONObject jsonBody = new JSONObject();
+                jsonBody.put("name", modelName);
+                jsonBody.put("stream", false); // Keep it simple for the initial pull
+
+                try (OutputStream os = conn.getOutputStream()) {
+                    os.write(jsonBody.toString().getBytes(StandardCharsets.UTF_8));
+                }
+
+                int code = conn.getResponseCode();
+                if (code == 200) {
+                    Log.d(TAG, "Model " + modelName + " downloaded successfully.");
+                } else {
+                    Log.e(TAG, "Failed to pull model. Code: " + code);
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Download Error: " + e.getMessage());
+            } finally {
+                if (conn != null) conn.disconnect();
+                isDownloading = false;
+            }
+        }).start();
+        return true;
     }
 }

@@ -54,10 +54,10 @@ public class MainActivity extends Activity {
 
                 // get bot reply in background (for LLM networking)
                 executor.execute(() -> {
-                    String reply = bot.reply(userMsg);
+                    BotResponse response = bot.reply(userMsg);
                     runOnUiThread(() -> {
                         // show bot message
-                        chatView.append("HeroBot: " + reply + "\n\n");
+                        chatView.append("HeroBot [" + response.getSource() + "]: " + response.getText() + "\n\n");
                     });
                 });
 
