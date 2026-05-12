@@ -10,6 +10,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.URLEncoder;
 import java.io.InputStreamReader;
 import java.util.*;
 
@@ -59,13 +60,20 @@ public class Chatbot {
             return smart;
         }
 
-        // 4. Ollama LLM Fallback
+        // 4. Internet Search & Learning
+        String webReply = fetchFromWeb(input);
+        if (webReply != null) {
+            train(input, webReply); // Persist the knowledge to DB
+            return webReply;
+        }
+
+        // 5. Ollama LLM Fallback
         String llmReply = askLocalLLM(input);
         if (llmReply != null && !llmReply.contains("error")) {
             return llmReply;
         }
 
-        return "I'm not sure how to answer that yet. You can teach me by typing 'train: question | answer'";
+        return "I'm not sure how to answer that, and I couldn't find it online. You can teach me by typing 'train: question | answer'";
     }
 
     // =========================
@@ -182,6 +190,42 @@ public class Chatbot {
         return words;
     }
 
+    private String fetchFromWeb(String query) {
+        try {
+            String urlStr = "https://api.duckduckgo.com/?q=" +
+                    URLEncoder.encode(query, "UTF-8") +
+                    "&format=json&no_html=1&skip_disambig=1";
+
+            URL url = new URL(urlStr);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(5000);
+
+            if (conn.getResponseCode() == 200) {
+                BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+                StringBuilder response = new StringBuilder();
+                String line;
+                while ((line = in.readLine()) != null) {
+                    response.append(line);
+                }
+                in.close();
+
+                JSONObject json = new JSONObject(response.toString());
+                String abstractText = json.optString("AbstractText", "");
+
+                if (!abstractText.isEmpty()) {
+                    return abstractText;
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Web Search Error: " + e.getMessage());
+        }
+        return null;
+    }
+
+    // =========================
+    // LLM FALLBACK
+    // =========================
     private String askLocalLLM(String prompt) {
         try {
             // Use 10.0.2.2 for Android Emulator to reach your PC, 
