@@ -20,9 +20,25 @@ public class Chatbot {
     private static final String TAG = "HeroBot_Logic";
     private DBHelper db;
     private static boolean isDownloading = false;
+    private final ConversationHistory history = new ConversationHistory();
 
     public Chatbot(Context context) {
         db = new DBHelper(context);
+        seedDatabase(context);
+    }
+
+    private void seedDatabase(Context context) {
+        Cursor cursor = db.getAll();
+        if (cursor.getCount() == 0) {
+            Log.d(TAG, "Database empty. Seeding with chit-chat data...");
+            try {
+                InputStream is = context.getResources().openRawResource(R.raw.chitchat);
+                importTrainingData(is);
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to seed database", e);
+            }
+        }
+        cursor.close();
     }
 
     // =========================
@@ -31,46 +47,85 @@ public class Chatbot {
     public BotResponse reply(String input) {
 
         input = input.toLowerCase().trim();
+        history.add("User: " + input);
+
+        // 0. Handle context-aware follow-ups
+        if (input.equals("why?") || input.equals("how?")) {
+            return new BotResponse("I'm basing my knowledge on my training data and the information I find online.", BotResponse.Source.SYSTEM);
+        }
 
         // 1. Exact match from DB
         String dbAnswer = db.getAnswer(input);
         if (dbAnswer != null) {
-            return new BotResponse(dbAnswer, BotResponse.Source.DATABASE);
+            BotResponse res = new BotResponse(dbAnswer, BotResponse.Source.DATABASE);
+            history.add("HeroBot: " + res.getText());
+            return res;
         }
 
         // 2. Simple built-in responses
-        if (input.contains("hello")) {
-            return new BotResponse("Hi! I'm HeroBot.", BotResponse.Source.SYSTEM);
+        if (input.contains("hello") || input.contains("hi ")) {
+            BotResponse res = new BotResponse("Hi! I'm HeroBot.", BotResponse.Source.SYSTEM);
+            history.add("HeroBot: " + res.getText());
+            return res;
         }
 
         if (input.contains("who are you")) {
-            return new BotResponse("I am HeroBot, your Android assistant.", BotResponse.Source.SYSTEM);
+            BotResponse res = new BotResponse("I am HeroBot, your Android assistant.", BotResponse.Source.SYSTEM);
+            history.add("HeroBot: " + res.getText());
+            return res;
         }
 
         if (input.contains("help")) {
-            return new BotResponse("I can answer trained questions or learn new ones!", BotResponse.Source.SYSTEM);
+            BotResponse res = new BotResponse("I can answer trained questions or learn new ones!", BotResponse.Source.SYSTEM);
+            history.add("HeroBot: " + res.getText());
+            return res;
         }
 
-        // 3. Fallback learning (simple similarity search)
+        // 3. Simple built-in personality
+        if (input.contains("favorite color")) {
+            return new BotResponse("I like Blue, it reminds me of a clean interface.", BotResponse.Source.SYSTEM);
+        }
+
+        // 4. Fallback learning (simple similarity search)
         String smart = findBestMatch(input);
         if (smart != null) {
-            return new BotResponse(smart, BotResponse.Source.DATABASE);
+            BotResponse res = new BotResponse(smart, BotResponse.Source.DATABASE);
+            history.add("HeroBot: " + res.getText());
+            return res;
         }
 
-        // 4. Internet Search & Learning
+        // 5. Internet Search: Wikipedia (High Priority for 'what/who is')
+        if (input.startsWith("what is") || input.startsWith("who is") || input.startsWith("tell me about")) {
+            String topic = input.replace("what is", "").replace("who is", "").replace("tell me about", "").trim();
+            String wikiReply = fetchFromWikipedia(topic);
+            if (wikiReply != null) {
+                train(input, wikiReply);
+                BotResponse res = new BotResponse(wikiReply, BotResponse.Source.WEB);
+                history.add("HeroBot: " + res.getText());
+                return res;
+            }
+        }
+
+        // 6. Internet Search: DuckDuckGo (General fallback)
         String webReply = fetchFromWeb(input);
         if (webReply != null) {
             train(input, webReply); // Persist the knowledge to DB
-            return new BotResponse(webReply, BotResponse.Source.WEB);
+            BotResponse res = new BotResponse(webReply, BotResponse.Source.WEB);
+            history.add("HeroBot: " + res.getText());
+            return res;
         }
 
-        // 5. Ollama LLM Fallback
+        // 7. Ollama LLM Fallback (With Context)
         String llmReply = askLocalLLM(input);
         if (llmReply != null) {
-            return new BotResponse(llmReply, BotResponse.Source.LLM);
+            BotResponse res = new BotResponse(llmReply, BotResponse.Source.LLM);
+            history.add("HeroBot: " + res.getText());
+            return res;
         }
 
-        return new BotResponse("I'm not sure how to answer that. You can teach me by typing 'train: question | answer'", BotResponse.Source.NONE);
+        BotResponse res = new BotResponse("I'm not sure how to answer that. You can teach me by typing 'train: question | answer'", BotResponse.Source.NONE);
+        history.add("HeroBot: " + res.getText());
+        return res;
     }
 
     // =========================
@@ -141,6 +196,37 @@ public class Chatbot {
         return null;
     }
 
+    private String fetchFromWikipedia(String query) {
+        HttpURLConnection conn = null;
+        try {
+            String urlStr = "https://en.wikipedia.org/api/rest_v1/page/summary/" +
+                    URLEncoder.encode(query.replace(" ", "_"), StandardCharsets.UTF_8.name());
+
+            URL url = new URL(urlStr);
+            conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(5000);
+            conn.setReadTimeout(5000);
+
+            if (conn.getResponseCode() == 200) {
+                try (BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+                    StringBuilder response = new StringBuilder();
+                    String line;
+                    while ((line = in.readLine()) != null) {
+                        response.append(line);
+                    }
+                    JSONObject json = new JSONObject(response.toString());
+                    return json.optString("extract", null);
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Wikipedia Error: " + e.getMessage());
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+        return null;
+    }
+
     private String fetchFromWeb(String query) {
         HttpURLConnection conn = null;
         try {
@@ -162,10 +248,20 @@ public class Chatbot {
                         response.append(line);
                     }
                     JSONObject json = new JSONObject(response.toString());
+                    
+                    // Priority 1: AbstractText
                     String abstractText = json.optString("AbstractText", "");
+                    if (!abstractText.isEmpty()) return abstractText;
 
-                    if (!abstractText.isEmpty()) {
-                        return abstractText;
+                    // Priority 2: Text from first RelatedTopic
+                    if (json.has("RelatedTopics")) {
+                        org.json.JSONArray topics = json.getJSONArray("RelatedTopics");
+                        if (topics.length() > 0) {
+                            JSONObject firstTopic = topics.optJSONObject(0);
+                            if (firstTopic != null) {
+                                return firstTopic.optString("Text", null);
+                            }
+                        }
                     }
                 }
             }
@@ -198,7 +294,7 @@ public class Chatbot {
 
             JSONObject jsonBody = new JSONObject();
             jsonBody.put("model", modelName);
-            jsonBody.put("prompt", "You are HeroBot. Be concise. User: " + prompt);
+            jsonBody.put("prompt", "You are HeroBot, a helpful Android assistant. Context of our conversation:\n" + history.getFormattedHistory() + "\nFinal User Input: " + prompt + "\nHeroBot:");
             jsonBody.put("stream", false);
 
             try (OutputStream os = conn.getOutputStream()) {

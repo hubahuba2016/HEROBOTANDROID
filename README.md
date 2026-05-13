@@ -115,18 +115,32 @@ settings.gradle     Gradle settings
 
 * [x] Android build setup
 * [x] APK generation
-* [ ] Improved chatbot engine
-* [ ] Better Android UI
-* [ ] Persistent memory system
-* [ ] AI/NLP improvements
-* [ ] Voice features
-* [ ] Game integration
+* [x] Modern Android UI (RecyclerView & Bubbles)
+* [x] MVVM Architecture Refactor
+* [x] Voice features (TTS & STT)
+* [x] Conversation context / Memory
+* [ ] Improved chatbot engine (Advanced NLP)
+* [ ] Expanded local database
+* [ ] Game integration / RPG elements
+* [ ] Image generation/vision support
 
 ## Contributing
 
 This project is currently experimental and under active development.
 
 Feedback, ideas, and testing are welcome.
+
+## Author
+
+HubakaGS
+
+Ko-fi:
+[ko-fi.com/kubohiki](https://ko-fi.com/kubohiki)
+
+## License
+
+ GNU GENERAL PUBLIC LICENSE Version 3
+nd testing are welcome.
 
 ## Author
 
