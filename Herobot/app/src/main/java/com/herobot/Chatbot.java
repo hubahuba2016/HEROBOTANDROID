@@ -95,22 +95,25 @@ public class Chatbot {
         }
 
         // 5. Internet Search: Wikipedia (High Priority for 'what/who is')
-        if (input.startsWith("what is") || input.startsWith("who is") || input.startsWith("tell me about")) {
-            String topic = input.replace("what is", "").replace("who is", "").replace("tell me about", "").trim();
+        if (input.matches("^(what is|who is|tell me about|who was|define|search for).*")) {
+            String topic = input.replaceAll("^(what is|who is|tell me about|who was|define|search for)", "").trim();
             String wikiReply = fetchFromWikipedia(topic);
             if (wikiReply != null) {
-                train(input, wikiReply);
-                BotResponse res = new BotResponse(wikiReply, BotResponse.Source.WEB);
+                String cleaned = cleanText(wikiReply);
+                String formatted = "I found this on Wikipedia: " + cleaned;
+                train(input, cleaned);
+                BotResponse res = new BotResponse(formatted, BotResponse.Source.WEB);
                 history.add("HeroBot: " + res.getText());
                 return res;
             }
         }
 
         // 6. Internet Search: DuckDuckGo (General fallback)
-        String webReply = fetchFromWeb(input);
-        if (webReply != null) {
-            train(input, webReply); // Persist the knowledge to DB
-            BotResponse res = new BotResponse(webReply, BotResponse.Source.WEB);
+        String ddgReply = fetchFromWeb(input);
+        if (ddgReply != null) {
+            String cleaned = cleanText(ddgReply);
+            train(input, cleaned); 
+            BotResponse res = new BotResponse("According to the web: " + cleaned, BotResponse.Source.WEB);
             history.add("HeroBot: " + res.getText());
             return res;
         }
@@ -126,6 +129,16 @@ public class Chatbot {
         BotResponse res = new BotResponse("I'm not sure how to answer that. You can teach me by typing 'train: question | answer'", BotResponse.Source.NONE);
         history.add("HeroBot: " + res.getText());
         return res;
+    }
+
+    /**
+     * Cleans up text by removing Wikipedia-style citations [1], [2], etc.
+     */
+    private String cleanText(String text) {
+        if (text == null) return null;
+        // Remove citation brackets like [1], [12], [citation needed]
+        String cleaned = text.replaceAll("\\[\\d+\\]|\\[[^\\]]+\\]", "");
+        return cleaned.trim();
     }
 
     // =========================
@@ -278,23 +291,25 @@ public class Chatbot {
     // =========================
     private String askLocalLLM(String prompt) {
         HttpURLConnection conn = null;
-        String modelName = "phi";
         try {
-            // 10.0.2.2 is the special alias for the host loopback interface in the Android Emulator.
-            // If you are running on a physical device, 'localhost' is used for Termux-hosted Ollama.
-            String host = android.os.Build.FINGERPRINT.contains("generic") ? "10.0.2.2" : "localhost";
-            
-            URL url = new URL("http://" + host + ":11434/api/generate");
+            URL url = new URL("http://localhost:11434/api/generate");
             conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
             conn.setRequestProperty("Content-Type", "application/json");
             conn.setDoOutput(true);
-            conn.setConnectTimeout(5000); 
-            conn.setReadTimeout(30000); // LLMs take time to generate, 30s is safer
+            conn.setConnectTimeout(10000);
+            conn.setReadTimeout(10000);
+
+            // Build context-aware prompt using conversation history
+            StringBuilder fullPrompt = new StringBuilder("You are HeroBot, a helpful Android assistant.\n");
+            for (String h : history.getHistory()) {
+                fullPrompt.append(h).append("\n");
+            }
+            fullPrompt.append("HeroBot:");
 
             JSONObject jsonBody = new JSONObject();
-            jsonBody.put("model", modelName);
-            jsonBody.put("prompt", "You are HeroBot, a helpful Android assistant. Context of our conversation:\n" + history.getFormattedHistory() + "\nFinal User Input: " + prompt + "\nHeroBot:");
+            jsonBody.put("model", "phi"); // Or your preferred model
+            jsonBody.put("prompt", fullPrompt.toString());
             jsonBody.put("stream", false);
 
             try (OutputStream os = conn.getOutputStream()) {
@@ -309,64 +324,23 @@ public class Chatbot {
                         response.append(line);
                     }
                     JSONObject jsonResponse = new JSONObject(response.toString());
-                    return jsonResponse.optString("response", "I'm having trouble thinking right now.").trim();
+                    return jsonResponse.optString("response", "").trim();
                 }
-            } else if (conn.getResponseCode() == 404 && !isDownloading) {
-                // Model not found on the server, try to pull it
-                Log.w(TAG, "Model " + modelName + " not found. Attempting to download...");
-                if (pullModelFromOllama(modelName)) {
-                    return "I'm downloading the '" + modelName + "' model now. Please try again in a minute!";
-                }
-                return null; // If pullModelFromOllama returns false, we need to return something.
-            } else {
-                Log.e(TAG, "Ollama Error (Code: " + conn.getResponseCode() + ")");
-                return null;
             }
-
         } catch (Exception e) {
             Log.e(TAG, "LLM Error: " + e.getMessage());
-            return null;
         } finally {
             if (conn != null) conn.disconnect();
         }
+        return null;
     }
 
     /**
-     * Commands the Ollama server to download a model.
+     * Simple class to manage conversation context for the LLM.
      */
-    private boolean pullModelFromOllama(String modelName) {
-        isDownloading = true;
-        new Thread(() -> {
-            HttpURLConnection conn = null;
-            try {
-                String host = android.os.Build.FINGERPRINT.contains("generic") ? "10.0.2.2" : "localhost";
-                URL url = new URL("http://" + host + ":11434/api/pull");
-                conn = (HttpURLConnection) url.openConnection();
-                conn.setRequestMethod("POST");
-                conn.setRequestProperty("Content-Type", "application/json");
-                conn.setDoOutput(true);
-
-                JSONObject jsonBody = new JSONObject();
-                jsonBody.put("name", modelName);
-                jsonBody.put("stream", false); // Keep it simple for the initial pull
-
-                try (OutputStream os = conn.getOutputStream()) {
-                    os.write(jsonBody.toString().getBytes(StandardCharsets.UTF_8));
-                }
-
-                int code = conn.getResponseCode();
-                if (code == 200) {
-                    Log.d(TAG, "Model " + modelName + " downloaded successfully.");
-                } else {
-                    Log.e(TAG, "Failed to pull model. Code: " + code);
-                }
-            } catch (Exception e) {
-                Log.e(TAG, "Download Error: " + e.getMessage());
-            } finally {
-                if (conn != null) conn.disconnect();
-                isDownloading = false;
-            }
-        }).start();
-        return true;
+    private static class ConversationHistory {
+        private final List<String> logs = new ArrayList<>();
+        public void add(String message) { logs.add(message); if (logs.size() > 10) logs.remove(0); }
+        public List<String> getHistory() { return logs; }
     }
 }
