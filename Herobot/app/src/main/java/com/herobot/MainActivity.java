@@ -2,11 +2,14 @@ package com.herobot;
 
 import android.app.AlertDialog;
 import android.os.Bundle;
+import android.view.Menu;
+import android.view.MenuItem;
 import android.view.View;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.Toast;
 
+import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.lifecycle.ViewModelProvider;
 import androidx.recyclerview.widget.LinearLayoutManager;
@@ -24,6 +27,7 @@ public class MainActivity extends AppCompatActivity {
     private ChatViewModel viewModel;
     private ChatAdapter adapter;
     private VoiceAssistant voiceAssistant;
+    private Chatbot chatbot;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -31,8 +35,9 @@ public class MainActivity extends AppCompatActivity {
         binding = ActivityMainBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
 
+        chatbot = new Chatbot(this);
         viewModel = new ViewModelProvider(this).get(ChatViewModel.class);
-        viewModel.init(new Chatbot(this));
+        viewModel.init(chatbot);
         voiceAssistant = new VoiceAssistant(this);
 
         setupRecyclerView();
@@ -75,6 +80,8 @@ public class MainActivity extends AppCompatActivity {
                 handleLegacyTrainCommand(userMsg);
             } else if (userMsg.toLowerCase().equals("train")) {
                 showTrainingDialog();
+            } else if (userMsg.toLowerCase().startsWith("ollama:")) {
+                handleOllamaCommand(userMsg);
             } else {
                 viewModel.sendMessage(userMsg);
             }
@@ -86,9 +93,28 @@ public class MainActivity extends AppCompatActivity {
         });
 
         binding.sendBtn.setOnLongClickListener(v -> {
-            showTrainingDialog();
+            showOllamaSettingsDialog();
             return true;
         });
+    }
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        menu.add(0, 1, 0, "Ollama Settings");
+        menu.add(0, 2, 0, "Train Bot");
+        return true;
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(@NonNull MenuItem item) {
+        if (item.getItemId() == 1) {
+            showOllamaSettingsDialog();
+            return true;
+        } else if (item.getItemId() == 2) {
+            showTrainingDialog();
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
     }
 
     @Override
@@ -106,6 +132,34 @@ public class MainActivity extends AppCompatActivity {
     protected void onDestroy() {
         super.onDestroy();
         voiceAssistant.shutdown();
+    }
+
+    private void showOllamaSettingsDialog() {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("Ollama Settings");
+
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(50, 40, 50, 10);
+
+        final EditText urlInput = new EditText(this);
+        urlInput.setHint("Server URL (e.g., http://192.168.1.5:11434/api/generate)");
+        layout.addView(urlInput);
+
+        final EditText modelInput = new EditText(this);
+        modelInput.setHint("Model Name (e.g., llama3, phi)");
+        layout.addView(modelInput);
+
+        builder.setView(layout);
+        builder.setPositiveButton("Save", (dialog, which) -> {
+            String url = urlInput.getText().toString().trim();
+            String model = modelInput.getText().toString().trim();
+            if (!url.isEmpty()) chatbot.setOllamaServerUrl(url);
+            if (!model.isEmpty()) chatbot.setOllamaModel(model);
+            Toast.makeText(this, "Ollama settings updated", Toast.LENGTH_SHORT).show();
+        });
+        builder.setNegativeButton("Cancel", null);
+        builder.show();
     }
 
     private void showTrainingDialog() {
@@ -147,6 +201,20 @@ public class MainActivity extends AppCompatActivity {
             }
         } catch (Exception e) {
             Toast.makeText(this, "Error in format. Use 'train: Q | A'", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void handleOllamaCommand(String userMsg) {
+        try {
+            String content = userMsg.substring(7).trim();
+            if (content.contains("|")) {
+                String[] parts = content.split("\\|");
+                chatbot.setOllamaServerUrl(parts[0].trim());
+                chatbot.setOllamaModel(parts[1].trim());
+                Toast.makeText(this, "Ollama Configured", Toast.LENGTH_SHORT).show();
+            }
+        } catch (Exception e) {
+            Toast.makeText(this, "Use 'ollama: URL | MODEL'", Toast.LENGTH_SHORT).show();
         }
     }
 }

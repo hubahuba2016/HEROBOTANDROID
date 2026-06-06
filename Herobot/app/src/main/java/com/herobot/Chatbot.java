@@ -2,7 +2,6 @@ package com.herobot;
 
 import android.content.Context;
 import android.database.Cursor;
-
 import android.util.Log;
 import org.json.JSONObject;
 import java.io.BufferedReader;
@@ -19,33 +18,44 @@ public class Chatbot {
 
     private static final String TAG = "HeroBot_Logic";
     private DBHelper db;
-    private static boolean isDownloading = false;
     private final ConversationHistory history = new ConversationHistory();
+    
+    // Default Ollama server address. 
+    // Use 10.0.2.2 for Android Emulator to access host's localhost.
+    // For real devices, use the IP address of the machine running Ollama.
+    private String ollamaServerUrl = "http://10.0.2.2:11434/api/generate";
+    private String ollamaModel = "phi"; // Default model
 
     public Chatbot(Context context) {
         db = new DBHelper(context);
         seedDatabase(context);
     }
 
-    private void seedDatabase(Context context) {
-        Cursor cursor = db.getAll();
-        if (cursor.getCount() == 0) {
-            Log.d(TAG, "Database empty. Seeding with chit-chat data...");
-            try {
-                InputStream is = context.getResources().openRawResource(R.raw.chitchat);
-                importTrainingData(is);
-            } catch (Exception e) {
-                Log.e(TAG, "Failed to seed database", e);
-            }
-        }
-        cursor.close();
+    public void setOllamaServerUrl(String url) {
+        this.ollamaServerUrl = url;
     }
 
-    // =========================
-    // MAIN ENTRY (USED BY APP)
-    // =========================
-    public BotResponse reply(String input) {
+    public void setOllamaModel(String model) {
+        this.ollamaModel = model;
+    }
 
+    private void seedDatabase(Context context) {
+        Cursor cursor = db.getAll();
+        if (cursor != null) {
+            if (cursor.getCount() == 0) {
+                Log.d(TAG, "Database empty. Seeding with chit-chat data...");
+                try {
+                    InputStream is = context.getResources().openRawResource(R.raw.chitchat);
+                    importTrainingData(is);
+                } catch (Exception e) {
+                    Log.e(TAG, "Failed to seed database", e);
+                }
+            }
+            cursor.close();
+        }
+    }
+
+    public BotResponse reply(String input) {
         input = input.toLowerCase().trim();
         history.add("User: " + input);
 
@@ -94,7 +104,7 @@ public class Chatbot {
             return res;
         }
 
-        // 5. Internet Search: Wikipedia (High Priority for 'what/who is')
+        // 5. Internet Search: Wikipedia
         if (input.matches("^(what is|who is|tell me about|who was|define|search for).*")) {
             String topic = input.replaceAll("^(what is|who is|tell me about|who was|define|search for)", "").trim();
             String wikiReply = fetchFromWikipedia(topic);
@@ -108,7 +118,7 @@ public class Chatbot {
             }
         }
 
-        // 6. Internet Search: DuckDuckGo (General fallback)
+        // 6. Internet Search: DuckDuckGo
         String ddgReply = fetchFromWeb(input);
         if (ddgReply != null) {
             String cleaned = cleanText(ddgReply);
@@ -131,19 +141,12 @@ public class Chatbot {
         return res;
     }
 
-    /**
-     * Cleans up text by removing Wikipedia-style citations [1], [2], etc.
-     */
     private String cleanText(String text) {
         if (text == null) return null;
-        // Remove citation brackets like [1], [12], [citation needed]
         String cleaned = text.replaceAll("\\[\\d+\\]|\\[[^\\]]+\\]", "");
         return cleaned.trim();
     }
 
-    // =========================
-    // TRAIN BOT
-    // =========================
     public void train(String question, String answer) {
         db.insertQA(question, answer);
     }
@@ -168,12 +171,9 @@ public class Chatbot {
         }
     }
 
-    // =========================
-    // SIMPLE NLP MATCH (NO LIBRARIES)
-    // =========================
     private String findBestMatch(String input) {
-
         Cursor cursor = db.getAll();
+        if (cursor == null) return null;
 
         List<String> questions = new ArrayList<>();
         List<String> answers = new ArrayList<>();
@@ -201,7 +201,6 @@ public class Chatbot {
             }
         }
 
-        // Using a 0.65 threshold for a balance between accuracy and flexibility
         if (bestScore > 0.65) {
             return bestAnswer;
         }
@@ -262,11 +261,9 @@ public class Chatbot {
                     }
                     JSONObject json = new JSONObject(response.toString());
                     
-                    // Priority 1: AbstractText
                     String abstractText = json.optString("AbstractText", "");
                     if (!abstractText.isEmpty()) return abstractText;
 
-                    // Priority 2: Text from first RelatedTopic
                     if (json.has("RelatedTopics")) {
                         org.json.JSONArray topics = json.getJSONArray("RelatedTopics");
                         if (topics.length() > 0) {
@@ -286,29 +283,25 @@ public class Chatbot {
         return null;
     }
 
-    // =========================
-    // LLM FALLBACK
-    // =========================
     private String askLocalLLM(String prompt) {
         HttpURLConnection conn = null;
         try {
-            URL url = new URL("http://localhost:11434/api/generate");
+            URL url = new URL(ollamaServerUrl);
             conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
             conn.setRequestProperty("Content-Type", "application/json");
             conn.setDoOutput(true);
-            conn.setConnectTimeout(10000);
-            conn.setReadTimeout(10000);
+            conn.setConnectTimeout(15000); // Increased timeout for LLM
+            conn.setReadTimeout(30000);
 
-            // Build context-aware prompt using conversation history
-            StringBuilder fullPrompt = new StringBuilder("You are HeroBot, a helpful Android assistant.\n");
+            StringBuilder fullPrompt = new StringBuilder("You are HeroBot, a helpful Android assistant. Use the conversation history below to provide context-aware responses.\n\n");
             for (String h : history.getHistory()) {
                 fullPrompt.append(h).append("\n");
             }
             fullPrompt.append("HeroBot:");
 
             JSONObject jsonBody = new JSONObject();
-            jsonBody.put("model", "phi"); // Or your preferred model
+            jsonBody.put("model", ollamaModel);
             jsonBody.put("prompt", fullPrompt.toString());
             jsonBody.put("stream", false);
 
@@ -326,6 +319,8 @@ public class Chatbot {
                     JSONObject jsonResponse = new JSONObject(response.toString());
                     return jsonResponse.optString("response", "").trim();
                 }
+            } else {
+                Log.e(TAG, "Ollama Server returned code: " + conn.getResponseCode());
             }
         } catch (Exception e) {
             Log.e(TAG, "LLM Error: " + e.getMessage());
@@ -335,9 +330,6 @@ public class Chatbot {
         return null;
     }
 
-    /**
-     * Simple class to manage conversation context for the LLM.
-     */
     private static class ConversationHistory {
         private final List<String> logs = new ArrayList<>();
         public void add(String message) { logs.add(message); if (logs.size() > 10) logs.remove(0); }
